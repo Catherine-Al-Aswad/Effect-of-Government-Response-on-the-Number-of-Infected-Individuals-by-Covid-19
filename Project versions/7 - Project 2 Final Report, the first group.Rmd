@@ -1,0 +1,646 @@
+---
+title: "Effect of Government Response on the Number of Infected Individuals"
+author: "Catherine Al Aswad, Ali Alhakeem, Uyen Dao, Long Kim Long"
+date: " Last Updated 10/31/2020"
+output:
+  html_document:
+    fig_caption: yes
+    theme: lumen
+    toc: yes
+    toc_depth: 2
+    df_print: kable
+    toc_float:
+      collapsed: no
+---
+
+```{r, include=FALSE}
+# Do not edit this code block/chunk
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning = FALSE, fig.width = 16/2.5, fig.height = 9/2.5)
+```
+
+
+```{r Packages}
+# Load all necessary packages here:
+library(tidyverse) 
+library(janitor)
+library(moderndive)
+library(here)
+library(knitr)
+library(readxl)
+library(tibbletime)    #to sort a variable of type 'date'
+library(MASS)    #for box-cox
+library(car)    #for vif and qqplot()
+library(plotly)   # for interactive graphs
+
+```
+
+```{r Wrangling}
+# data wrangling code:
+#reading in the code
+confirmed_cases <- read_csv(here("time_series_covid19_confirmed_global_2.csv"))
+indicator_data <- read_csv(here("indicator data 2.csv"))
+total_population <- read_xls(here("total_population.xls"))
+
+
+
+## confirmed cases data set
+# selecting the columns we need
+# pivoting the table to tidy it
+confirmed_cases_tidy <- confirmed_cases %>%
+    dplyr::select(-c("Province/State", "Lat", "Long")) %>%
+    pivot_longer(names_to = "date",    
+               values_to = "cumulative_confirmed_cases", 
+               cols = -"Country/Region" ) 
+
+# changing column names (doing it early because a name with / without "" causes problems later)
+colnames(confirmed_cases_tidy) <- c("Country" , "Date" , "cumulative_confirmed_cases")
+
+# Taking the sum of confirmed cases of all the regions in a country; before, the cases were per region in each country, we are summing them to get total per country, irrelevant of region
+# Changed the date and country type, so that it is not hard to join them later
+# filter the data for the date we want: 2020-10-23, the earliest day for doing the study (known before starting the analysis)
+confirmed_cases_tidy <- confirmed_cases_tidy %>%
+    group_by(Country, Date) %>%
+    summarise(cumulative_confirmed_cases = sum(cumulative_confirmed_cases)) %>%    
+    mutate(Date = as.Date(Date, format = "%m/%d/%y"),
+           Country = as.factor(Country)) %>%
+    arrange(Date) %>%
+    as_tbl_time(index = Date) %>%
+    filter_time(time_formula = ~ '2020-10-23')   
+
+# Some countries are referred to differently in each data set, so we fixed their names to be consistent, so some country data is not lost. The countries whose alternative names are not obvious where searched to make sure that they are correct. 
+# The code commented out below was used to check for inconsistent country names:
+# setdiff(unique(total_population_tidy$Country),unique(indicator_data_tidy$Country))
+# setdiff(unique(indicator_data_tidy$Country),unique(total_population_tidy$Country))
+# 
+# setdiff(unique(total_population_tidy$Country),unique(confirmed_cases_tidy$Country))
+# setdiff(unique(confirmed_cases_tidy$Country),unique(total_population_tidy$Country))
+# 
+# setdiff(unique(indicator_data_tidy$Country), unique(confirmed_cases_tidy$Country))
+# setdiff(unique(confirmed_cases_tidy$Country), unique(indicator_data_tidy$Country))
+
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="US"] = "United States"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Taiwan*"] = "Taiwan"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Burma"] = "Myanmar"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Korea, South"] = "Republic of Korea (South)"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Slovakia"] = "Slovak Republic"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Czechia"] = "Czech Republic"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Congo (Brazzaville)"] = "The Republic of Congo"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Congo (Kinshasa)"] = "The Democratic Republic of Congo"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Kyrgyzstan"] = "Kyrgyz Republic"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Iran"] = "Islamic Republic of Iran"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Syria"] = "Syrian Arab Republic"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Russia"] = "Russian Federation"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Egypt"] = "Arab Republic of Egypt"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Yemen"] = "Republic of Yemen"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Venezuela"] = "Venezuela, RB"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Brunei"] = "Brunei Darussalam"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Laos"] = "Lao People's Democratic Republic"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Saint Kitts and Nevis"] = "St. Kitts and Nevis"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Saint Vincent and the Grenadines"] = "St. Vincent and the Grenadines"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Saint Lucia"] = "St. Lucia"
+
+
+
+
+## indicator data set
+# removed the first row which are the column titles
+# selected the columns we want ( we knew in advance which indices we will use)
+# changed the date and country type to facilitate joining them later
+# took the average index for a country (we have regional indices, but we want it for the entire country)
+# filtered the data for the date we want (known before starting the analysis)
+indicator_data_tidy <- indicator_data[-1,] %>%
+   dplyr::select("CountryName", "Date", "StringencyIndex", "EconomicSupportIndex") %>%
+   mutate(Date = as.Date(Date, format = "%Y%m%d"),
+          CountryName = as.factor(CountryName)) %>%
+   group_by(CountryName, Date) %>%
+   summarise(StringencyIndex = mean(StringencyIndex, na.rm=TRUE),
+             EconomicSupportIndex = mean(EconomicSupportIndex, na.rm = TRUE)) %>%
+   arrange(Date) %>%
+   as_tbl_time(index = Date) %>%
+   filter_time(time_formula = ~ '2020-06-15')   
+
+# Changed the column names
+colnames(indicator_data_tidy) <- c("Country" , "Date" ,  "Stringency_Index", "Economic_Support_Index")
+
+# Some countries are referred to differently in each data set, so we fixed their names to be consistent, so some country data is not lost. The countries whose alternative names are not obvious where searched to make sure that they are correct. 
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Cape Verde"] = "Cabo Verde"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Palestine"] = "West Bank and Gaza"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Congo"] = "The Republic of Congo"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Democratic Republic of Congo"] =  "The Democratic Republic of Congo"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Iran"] = "Islamic Republic of Iran"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Syria"] = "Syrian Arab Republic"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Hong Kong"] = "Hong Kong SAR, China"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Russia"] = "Russian Federation"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="South Korea"] = "Republic of Korea (South)"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Egypt"] = "Arab Republic of Egypt"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Yemen"] = "Republic of Yemen"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Venezuela"] = "Venezuela, RB"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Brunei"] = "Brunei Darussalam"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Laos"] = "Lao People's Democratic Republic"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Macao"] = "Macao SAR, China"
+
+
+
+#population data set
+# removed first 3 rows: an entirely empty row, the title row, and a row not about a country
+# selected the columns we want: using 2019 population (...64) because 2020 population (...65) is not available  
+# there is a line for 'Not classified' data source and is the only one with an na population in 2019; removed it
+# fixed data types
+total_population_tidy <- total_population[-c(1:3),] %>%  
+  dplyr::select("Data Source", "...64") %>% 
+  na.omit() %>%  
+  mutate(...64 = as.double(...64))
+
+# changed column names; did this early since a name with a space causes problems in the code if there is no ""
+colnames(total_population_tidy) <- c("Country" , "Population2019")
+
+# fixed the country type to the join works
+total_population_tidy <- total_population_tidy %>%
+  mutate(Country = as.factor(Country))       
+
+# Some countries are referred to differently in each data set, so we fixed their names to be consistent, so some country data is not lost. The countries whose alternative names are not obvious where searched to make sure that they are correct. 
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)== "Virgin Islands (U.S.)"] = "United States Virgin Islands"
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)=="Congo, Rep."] = "The Republic of Congo"
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)=="Congo, Dem. Rep."] =  "The Democratic Republic of Congo"
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)=="Iran, Islamic Rep."] = "Islamic Republic of Iran"
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)=="Korea, Rep."] = "Republic of Korea (South)"
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)=="Egypt, Arab Rep."] = "Arab Republic of Egypt"
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)=="Yemen, Rep."] = "Republic of Yemen"
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)=="Gambia, The"] = "Gambia"
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)=="Lao PDR"] = "Lao People's Democratic Republic"
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)=="Bahamas, The"] = "Bahamas"
+
+
+
+## final joint data set
+# did the join by country
+# created our dependent variable (there is no population of zero when dividing, and neither variable used has missing values)
+# removed missing values (only the indices had missing values)
+ tidy_joined_dataset <-  indicator_data_tidy %>%
+    inner_join(confirmed_cases_tidy, by = c ("Country")) %>%
+    inner_join(total_population_tidy, by = c ("Country")) %>%
+    mutate(cumulative_confirmed_cases_per_10000 = (cumulative_confirmed_cases/Population2019)*10000)   %>%
+    na.omit()  
+
+```
+
+
+***
+
+
+# I. Introduction 
+
+
+Amid the Coronavirus Disease pandemic in 2020, governments around the world developed a response to aid the citizens of their countries and mitigate the spread of the Severe Acute Respiratory Syndrome Coronavirus 2. This study aims to understand the relationship between the most recent cumulative number of confirmed cases of COVID-19 in different countries, per 10,000 individuals (on the 23rd of October 2020), with the past government responses in these countries to the outbreak (set on the 15th of June 2020). A model will be constructed to depict this relationship.
+ 
+The data used in this study is obtained from The Humanitarian Data Exchange data portal and includes the total population for each country in 2019^[“Total Population” World Bank Indicators of Interest to the COVID-19 Outbreak. COVID-19 Pandemic. _ World Bank_. United Nations Office for the Coordination of Humanitarian Affairs. 2020. Accessed October 2020 https://data.humdata.org/dataset/novel-coronavirus-2019-ncov-cases], the Stringency and Economic Support indices on the 15th of June 2020^[“OxCGRT_CSV” OXFORD COVID-19 Government Response Stringency index, COVID-19 Pandemic. _The Oxford COVID-19 Government Response Tracker_. United Nations Office for the Coordination of Humanitarian Affairs. 2020. Accessed October 2020 https://data.humdata.org/dataset/oxford-covid-19-government-response-tracker], and the cumulative number of confirmed cases of COVID-19 in different countries^[“time_series_covid19_confirmed_global.csv” Novel Coronavirus (COVID-19) Cases Data. COVID-19 Pandemic. _Johns Hopkins University Center for Systems Science and Engineering (JHU CCSE)_. United Nations Office for the Coordination of Humanitarian Affairs. 2020. Accessed October 2020 https://data.humdata.org/dataset/novel-coronavirus-2019-ncov-cases] on the 23rd of October 2020. 
+When comparing the number of infected individuals across countries, the population size of these countries need to be considered. So, the study will look at the cumulative number of confirmed cases of COVID-19 collected on the 23rd of October 2020 in different countries, per 10,000 individuals, and is calculated as: $\frac{\text{cumulative cases in the country}}{\text{total population of the country}} \cdot 10,000$. The 23rd of October was chosen because it was the most recent date when this study was done.
+ 
+The continuous variables Stringency Index and Economic Support Index are used to quantify the government response. The former index accounts for closure, containment, and public health measures, and the latter index accounts for the economic response taken by the governments. Two other indices, Government Response Index and Containment and Health Index, were considered instead of the Economic Support Index. However, 9/13 and 9/11 of the variables used to calculate the Government Response Index and Containment and Health Index respectively are in common with all 9 variables used to calculate the Stringency Index, suggesting the presence of high correlation between the indices, which is not ideal. On the other hand, the Stringency Index and the Economic Support Index are calculated with no features in common. ^[“Methodology for calculating indices” OXFORD COVID-19 Government Response Stringency index, COVID-19 Pandemic, Index methodology version 3.1. _The Oxford COVID-19 Government Response Tracker_. United Nations Office for the Coordination of Humanitarian Affairs. 25 May 2020. Accessed October 2020 https://github.com/OxCGRT/covid-policy-tracker/blob/master/documentation/index_methodology.md] Note that the data used provides different government responses for different regions within certain countries, for example the United States of America. Since this study is looking at a country as a whole, the average government response of a country on the 15th of June 2020 will be used, by taking the average government response of all its regions on that day.
+ 
+When deciding on a day to look at the government response, it was decided to choose a day after April 28 2020, since that is when the Stringency index and the Economic Support index were refined and expanded to give a more accurate measure for the government response.^[“What’s Changed?” OXFORD COVID-19 Government Response Stringency index, COVID-19 Pandemic. _The Oxford COVID-19 Government Response Tracker_. United Nations Office for the Coordination of Humanitarian Affairs. 28 April 2020. Accessed October 2020 https://www.bsg.ox.ac.uk/sites/default/files/OxCGRT.%20What%27s%20changed%2024%20April%202020.pdf] Also, the day had to be at least two weeks before the 23rd of October 2020, so that there is time for the response to take effect before looking at its effect on the number of infected individuals. Then, looking at some of the factors that are used to calculate the Stringency and Economic support indices - the income support^[“Income support during the COVID-19 pandemic” Coronavirus pandemic, _Our World in Data_, 2020. Accessed October 2020  https://ourworldindata.org/grapher/income-support-covid?time=2020-06-19] and dept. or contract relief^[“Dept or contract relief during the COVID-19 pandemic” Coronavirus pandemic, _Our World in Data_, 2020. Accessed October 2020  https://ourworldindata.org/grapher/debt-relief-covid?time=2020-06-26], and international travel control^[“International travel controls during the COVID-19 pandemic” Coronavirus pandemic, _Our World in Data_, 2020. Accessed October 2020 https://ourworldindata.org/grapher/international-travel-covid?time=2020-06-23] respectively - the countries did not change their response to these variables at all or only slightly within May and July.  Having some of the features that are included in the government response stay almost constant for a while allows the response to show its effect on the number of infected individuals more clearly, since the same response has been going on for a while versus looking at a response that changes within a week of its implementation. Thus, we took a day in the middle of the May to July interval: the 15th of June 2020.
+
+After organizing the data, 167 countries remain represented in the dataset, out of the 195 countries in the world (approximately 85%)^[“How many Countries are there in the World?”, Worldometer, 2020. Accessed October 2020 https://www.worldometers.info/geography/how-many-countries-are-there-in-the-world/].
+
+
+Table 1.Sample for 5 randomly chosen countries of the data set used in this study
+```{r sample_table}
+Cases_filtered = tidy_joined_dataset %>%
+  dplyr::select(c(Country, Stringency_Index, Economic_Support_Index, Population2019, cumulative_confirmed_cases_per_10000)) 
+
+Cases_filtered %>% 
+  ungroup() %>%
+  sample_n(5)
+
+```
+
+
+
+***
+
+
+# II. Exploratory data analysis
+
+
+***
+Table 2: Summary for the cumulative confirmed cases per 10,000
+```{r summary_table}
+tidy_joined_dataset %>% 
+  ungroup() %>%
+  summarize(n = n(), 
+            min = min(cumulative_confirmed_cases_per_10000 , na.rm = T), 
+            median = median(cumulative_confirmed_cases_per_10000 , na.rm = T), 
+            mean = mean(cumulative_confirmed_cases_per_10000 , na.rm = T), 
+            max = max(cumulative_confirmed_cases_per_10000 , na.rm = T),
+            sd = sd(cumulative_confirmed_cases_per_10000 , na.rm = T)) 
+
+```
+
+Our total sample size was 167 (Table 2). The mean cumulative confirmed cases (CCC) per 10,000 is about 70.11, far greater than our median 33.83, indicating that our CCC distribution is heavily right-skewed, which can easily be observed in Figure 1. This is to be expected for the lowest CCC possible is 0 whereas there is no such bound for the highest number. Most countries have their CCC within the 300-mark, we also notice the existence of some very extreme cases (outliers). 
+
+```{r   D_CCPTTH, fig.cap = "Figure 1. Distribution for the cumulative confirmed cases per 10,000 for individual countries ", fig.align = "center"}
+
+ggplot(tidy_joined_dataset,  aes(x= cumulative_confirmed_cases_per_10000)) +
+  geom_histogram(bins = 20, fill = "#f9f906", color = "#ff6600") +
+  labs(x = "Cumulative confirmed cases per 10,000 individuals") +
+    theme_bw()
+
+
+```
+
+The distribution of the Stringency Index (Figure 2), which measures government response, seems to resemble a bell shape although there is a slight skew on the left tail. The Economic Support Index distribution (Figure 3), which records measures such as income support and debt relief, also seems to be a bit left-skewed. We notice that there are two modes at 50 and 75, but suspect that could be due to rounding.
+
+
+```{r   D_SI, fig.cap = "Figure 2. Distribution for the government response measured by the Stringency Index", fig.align = "center"}
+
+#bimodal, is this normally distributed
+ggplot(tidy_joined_dataset, aes(x= Stringency_Index)) +
+  geom_histogram(bins = 15, fill = "#f9f906", color = "#ff6600") +
+    labs(x = "Stringency Index") +
+    theme_bw()
+
+
+```
+
+```{r   D_ESI, fig.cap = "Figure 3. Distribution for the government response measured by the Economic Support Index", fig.align = "center"}
+
+ggplot(tidy_joined_dataset, aes(x= Economic_Support_Index)) +
+  geom_histogram(fill = "#f9f906", color = "#ff6600") +
+  labs(x = "Economic Support Index") +
+    theme_bw()
+
+
+
+```
+
+In figure 4, the scatterplot shows that there seems so be some correlation between the cumulative confirmed cases per 10,000 (CCC) and the Stringency Index, which suggests that, without implying any causal effect, countries with a higher number of cases per 10,000 tend to also have strict policies on pandemic response. It is worth noting that there exist a few outliers (we consider those that pass the 400-mark of CCC) that might have more influence on the best fit line. We also notice that for the cases of (almost) 0 CCC for many countries, the response (Stringency Index) diverses the most (from 0 to 100) compared to other levels, with more points clustering in the [50,75] range. This diversity is also true for Economic Support, which suggests that countries with very low CCC also spend a variety amount on income support and debt relief packages. However, countries that have more CCC definitely tend to spend more on said packages.
+
+
+```{r   SC_SI, fig.cap = "Figure 4. Interactive Scatterplot for the cumulative confirmed cases per 10,000 for individual countries against their government response measured by the Stringency Index. The red line is the best fit line. The blue curve is the Loess curve.", fig.align = "center"}
+
+p1 <- ggplot(tidy_joined_dataset, aes(x= Stringency_Index, y= cumulative_confirmed_cases_per_10000, size = Population2019, color = Economic_Support_Index, label = Country )) +
+  geom_point(alpha = 0.4) +
+  scale_color_gradient(low="#ffff00", high="#ff6600") +
+  geom_smooth(method = "lm", se = FALSE, size = 0.4, colour= "red") +
+  geom_smooth(method = "loess", se = FALSE, size = 0.4, colour="blue") +
+  labs(y = "Cumu. confirmed cases per 10,000", x = "Stringency Index") +
+  theme(panel.grid.major =  element_line(colour = "#DCDCDC"),
+        panel.grid.minor = element_line(colour = "#DCDCDC"),
+        axis.line = element_line(colour = "black"),
+        panel.background = element_blank(),
+        panel.border = element_rect(colour = "black", 
+                                    fill=NA, 
+                                    size=0.5))
+
+ggplotly(p1)
+
+```
+
+The scatter plot in Figure 5 for the CCC against Economic Support Index has more points on the bottom and fewer at the top. This implies that countries with lower cases per 10,000 individuals tend to spend less on economic relief packages.
+
+```{r SP_ESI , fig.cap = "Figure 5. Interactive Scatterplot for the cumulative confirmed cases per 10,000 for individual countries against their government response measured by the Economic Support Index. The red line is the best fit line. The blue curve is the Loess curve.", fig.align = "center"}
+
+p2 <- ggplot(tidy_joined_dataset, aes(x= Economic_Support_Index, y= cumulative_confirmed_cases_per_10000, size = Population2019, color = Stringency_Index, label = Country)) +
+  geom_jitter(alpha = 0.4, width = 1.5, height = 0) +
+  scale_color_gradient(low="#ffff00", high="#ff6600") +
+  geom_smooth(method = "lm", se = FALSE, size = 0.5, colour= "red") +
+  geom_smooth(method = "loess", se = FALSE, size = 0.5, colour="blue") +
+  labs(y = "Cumu. confirmed cases per 10,000", x = "Economic Support Index") +
+  theme(panel.grid.major =  element_line(colour = "#DCDCDC"),
+        panel.grid.minor = element_line(colour = "#DCDCDC"),
+        axis.line = element_line(colour = "black"),
+        panel.background = element_blank(),
+        panel.border = element_rect(colour = "black", 
+                                    fill=NA, 
+                                    size=0.5))
+
+ggplotly(p2)
+
+```
+
+***
+
+
+
+# III. Multiple linear regression
+
+## i. Methods
+
+
+***
+
+```{r  primary_model}
+
+first_model <- lm(cumulative_confirmed_cases_per_10000 ~  Stringency_Index + Economic_Support_Index, data = tidy_joined_dataset)
+
+#summary(first_model)
+
+```
+
+Our initial model is the following:
+
+$$
+\begin{aligned}\widehat{Y}_{CCPTTH} =& b_{0} + b_{SI} \cdot (x_1) + b_{ESI} \cdot (x_2) \\
+ = & -31.3037 + 0.7567 \cdot (x_1)  + 1.0102	 \cdot (x_2)
+\end{aligned} 
+$$
+
+Our group intended to use a linear model on the given data, then performed a residual analysis,  as an in-sample validation method, to detect any systematic departure from the assumptions upon which the model is built: normality, independence, and homoscedasticity of the residuals. In Figure 6, we are presented with a normal QQ-plot of the residuals, which plots the theoretical quantiles against their observed sample counterparts. The graph presents an upward curve, implying that our data is heavily right-skewed. This is confirmed in Figure 7, showing the histogram of the error terms.
+
+
+```{r qqplots ,fig.cap= "Figure 6. Normal Q-Qplot for the model under discussion", fig.align = "center"}
+
+qqnorm(tidy_joined_dataset$cumulative_confirmed_cases_per_10000, pch = 1, frame = FALSE) 
+qqline(tidy_joined_dataset$cumulative_confirmed_cases_per_10000, col = "#e6005c", lwd = 2)
+
+```
+
+```{r rez_dis, fig.cap = "Figure 7. Residuals distribution for the statistical model", fig.align = "center"}
+
+regression_points <- get_regression_points(first_model)
+ggplot(regression_points, aes(x = residual)) +
+  geom_histogram(bins = 20, color = "#ff9999", fill = "#e6005c")+
+  labs(x = "Residuals") +
+  theme_bw()
+
+```
+
+Not only that, Figures 8, 9 and 10 present a fanning-out pattern of the residuals, implying that the variance is non-constant, or heteroscedasticity.
+
+```{r rez_fv, fig.cap = "Figure 8. Residuals graph for the fitted values, with a Lowess curve in blue and a horizontal line at zero in red.", fig.align = "center"}
+
+ggplot(tidy_joined_dataset, aes(x = predict(first_model), y = resid(first_model))) +
+  geom_point(shape = 1) +
+  geom_smooth(method = "lm", se = FALSE, size = 0.5, colour= "red") +
+  geom_smooth(method = "loess", se = FALSE, size = 0.5, colour="blue") +
+  labs(y = "Residuals", x = "Fitted Values") +
+  theme_bw()
+
+```
+
+
+```{r rez_SI, fig.cap = "Figure 9. Residuals graph for the Stringency Index, with a Lowess curve in blue and a horizontal line at zero in red.", fig.align = "center"}
+
+rstandard_val <- rstandard(first_model)
+
+ggplot(tidy_joined_dataset, aes(x = Stringency_Index, y = rstandard_val)) +
+  geom_point(shape = 1) +
+  geom_smooth(method = "lm", se = FALSE, size = 0.5, colour= "red") +
+  geom_smooth(method = "loess", se = FALSE, size = 0.5, colour="blue") +
+  labs(y = "rstandard", x = "Stringency Index") +
+  theme_bw()
+
+```
+
+
+```{r rez_ESI, fig.cap = "Figure 10. Residuals graph for the Economic Support Index, with a Lowess curve in blue and a horizontal line at zero in red.", fig.align = "center"}
+
+ggplot(tidy_joined_dataset, aes(x = Economic_Support_Index, y = rstandard_val)) +
+  geom_point(shape = 1) +
+  geom_smooth(method = "lm", se = FALSE, size = 0.5, colour= "red") +
+  geom_smooth(method = "loess", se = FALSE, size = 0.5, colour="blue") +
+  labs(y = "rstandard", x = "Economic Support Index") +
+  theme_bw()
+
+```
+
+Due to the violation of the normality and homoscedasticity assumption mentioned above, we recognize that a transformation is much needed. Using the method of log-likelihood (Figure 11), our dependent variable (CCC) will be transformed by the factor of 0.1818. This factor is positive, thus should not be altering the direction of correlation in our inference later on. Note that in Table 2, our min is 0.033 (and not 0), hence our transformation is valid without having to leave out any y value for any country.
+
+```{r mod_transf, fig.cap = "Figure 11. Graph resulting from a Box Cox Test", fig.align = "center"}
+transformation_test = MASS::boxcox(first_model)
+lambda = transformation_test$x[which(transformation_test$y == max(transformation_test$y))]
+#lambda
+```
+
+
+```{r updated_model}
+tidy_joined_dataset["cumulative_confirmed_cases_per_10000_transf"] <- (tidy_joined_dataset$cumulative_confirmed_cases_per_10000)^lambda
+
+#creating the transformed model
+model_transf <- lm(cumulative_confirmed_cases_per_10000_transf ~ Stringency_Index + Economic_Support_Index, data = tidy_joined_dataset)
+
+```
+
+Comparing the residual graphs (Figure 12 to 16) of the transformed data with what we started with, we observe that the distribution of error terms is fixed to more bell-shaped, the normal Q-Q plot shows an almost straight line, and the residual scatter plot is cloud-shaped (the residuals for Economic support Index is more spread-out). We may conclude that the transformation has allowed our assumptions about the model to be reasonably met in order to proceed with our analysis.
+
+```{r transf_qqplor, fig.cap = "Figure 12. Normal QQplot for the transformed model", fig.align = "center"}
+qqnorm(tidy_joined_dataset$cumulative_confirmed_cases_per_10000_transf, pch = 1, frame = FALSE)
+qqline(tidy_joined_dataset$cumulative_confirmed_cases_per_10000_transf, col = "#ff6600", lwd = 2)
+
+```
+
+
+```{r rez_dis_transf, fig.cap = "Figure 13. Residuals distribution for the transformed statistical model", fig.align = "center"}
+
+regression_points_2 <- get_regression_points(model_transf)
+ggplot(regression_points_2, aes(x = residual)) +
+  geom_histogram(bins = 20, color = "#f9f906", fill = "#ff6600")+
+  labs(x = "Residual") +
+  theme_bw()
+
+```
+
+
+```{r rez_fv_transf, fig.cap = "Figure 14. Residuals against the fitted values of the transformed model, with a Lowess curve in blue and a horizontal line at zero in red.", fig.align = "center"}
+
+ggplot(tidy_joined_dataset, aes(x = predict(model_transf), y = resid(model_transf))) +
+  geom_point(shape = 1) +
+  geom_smooth(method = "lm", se = FALSE, size = 0.5, colour= "red") +
+  geom_smooth(method = "loess", se = FALSE, size = 0.5, colour="blue") +
+  labs(y = "Residuals", x = "Fitted Values") +
+  theme_bw()
+
+```
+
+
+```{r rez_SI_transf, fig.cap = "Figure 15. Residuals graph for the Stringency Index after the transformation, with a Lowess curve in blue and a horizontal line at zero in red.", fig.align = "center"}
+
+rstandard_val_t <- rstandard(model_transf)
+
+ggplot(tidy_joined_dataset, aes(x = Stringency_Index, y = rstandard_val_t)) +
+  geom_point(shape = 1) +
+  geom_smooth(method = "lm", se = FALSE, size = 0.5, colour= "red") +
+  geom_smooth(method = "loess", se = FALSE, size = 0.5, colour="blue") +
+  labs(y = "rstandard", x = "Stringency Index") +
+  theme_bw()
+
+```
+
+
+```{r rez_ESI_transf, fig.cap = "Figure 16. Residuals graph for the Economic Support Index after the transformation, with a Lowess curve in blue and a horizontal line at zero in red.", fig.align = "center"}
+
+
+ggplot(tidy_joined_dataset, aes(x = Economic_Support_Index, y = rstandard_val_t)) +
+  geom_point(shape = 1) +
+  geom_smooth(method = "lm", se = FALSE, size = 0.5, colour= "red") +
+  geom_smooth(method = "loess", se = FALSE, size = 0.5, colour="blue") +
+  labs(y = "rstandard", x = "Economic Support Index") +
+  theme_bw()
+
+```
+
+To ensure that multicollinearity is not a problem in the transformed model, the VIF values were calculated for the variables in the transformed model. It was found that there is little to no multicollinearity, so the study will proceed with the chosen model transformation.
+
+```{r vif_test}
+# car::vif(first_model)
+car::vif(model_transf)
+
+```
+
+
+
+## ii. Model Results
+
+***
+Table 3. Model Summary Table
+```{r   transf_model_summary}
+
+summary(model_transf) 
+
+```
+
+Table 4. The 95% Confidence Intervals
+```{r transf_model_CI}
+kable(confint(model_transf))
+```
+
+***
+
+## iii. Interpreting the regression table
+
+Our model is the following:
+
+$$
+\begin{aligned}\widehat{Y}_{CCPTTH}^{0.182} =& b_{0,t} + b_{SI,t} \cdot (x_1) + b_{ESI,t} \cdot (x_2) \\
+ = & 1.017725 + 0.006525 \cdot (x_1)  + 0.007814	 \cdot (x_2)
+\end{aligned} 
+$$
+
+<tab> + The intercept ($b_{0}$ = 1.017725) represents the average number of cases per 10000 to the power of 0.1818182, given a 0 on both the Stringency Index and the Economic Support Index. 
+
+<tab> + The slope estimation for the Stringency Index indicates the rate of change of the average number of cases per 10000 to the power of 0.1818182 increasing by 0.006525  units with every unit increase of the Stringency Index, given the Economic Support Index being equal.
+
+<tab> + The slope estimation for the Economic Support Index indicates that the average number of cases per 10000 to the power of 0.1818182 increases by 0.007814 units with every unit increase of the Economic Support Index, given the Stringency Index being equal.
+
+<tab> + We find our adjusted R-squared to be 0.1702 which is low but does demonstrate some explanation for the observation variability in comparison to no predictor variables at all, given the p-value 8.405e-08 and an F-statistic of 18.02 on 2 and 164 DF. This seems to tell us that it is better than only the mean of confirmed cases per 10000 transformed to the power of 0.18, but it would be better to add more explanatory variables to our model to explain more variability.
+
+
+
+
+## iv. Inference for multiple regression
+
+Using our confidence intervals table (Table 4) output, we are going to test different null hypothesis. 
+
+$$\begin{aligned} H_0:&\beta_{0,t} = 0 \\\ \mbox{vs }H_A:& \beta_{0,t} \neq 0 \end{aligned}$$
+
+For the intercept in the transformed model, we find the 95% confidence intervals for it to be [0.6951053, 1.3403447] indicating that it is implausible to be zero at a 95% confidence level. We can also see that the p-value is small at 3.81e-09 which means we can reject the null hypothesis that the intercept is 0 for the alternate hypothesis that it is non-zero and positive. In context, the intercept makes sense, since a country can choose to not give any economic support nor take closure, containment, and public health measures (for the Stringency index), while still having a positive number of cumulative infected individuals by Covid-19.
+
+
+$$\begin{aligned} H_0:&\beta_{SI,t} = 0 \\\ \mbox{vs }H_A:& \beta_{SI,t} \neq 0 \end{aligned}$$
+
+For the Stringency Index, we find the 95% confidence interval for the rate of change is [0.0022874, 0.0107619] indicating that it is implausible to be zero at a 95% confidence level. We can also see that the p-value is small at 0.00275 which means we can reject the null hypothesis that the slope is 0 for the alternate hypothesis that it is non-zero and positive.
+
+$$\begin{aligned} H_0:&\beta_{ESI,t} = 0 \\\ \mbox{vs }H_A:& \beta_{ESI,t} \neq 0 \end{aligned}$$
+
+For the Economic Support Index, we find the 95% confidence interval for the rate of change is [0.0048542, 0.0107742] indicating that the slope is plausibly positive at a 95% confidence level. We can also see that the p-value is very small at 0.0000006 which means we can reject the null hypothesis that the slope is 0 for the alternate hypothesis that it is non-zero and positive. 
+
+The next research question we want to explore is: Is the transformed cumulative cases significantly related to the Stringency Index given nothing in the model? From the ANOVA table, there is sufficient evidence (F=8.873995 , P<0.01) to conclude that the Stringency Index is significantly related to the transformed cumulative cases given nothing in the model.
+
+
+Table 5. ANOVA table for the transformed model
+```{r transf_model_ANOVA}
+anova(model_transf)
+
+```
+
+
+The 95% Prediction intervals for Stringency Index; for example, a country with a Stringency Index equals to 20, Economic Support Index equal to 50, and transformed cumulative confirmed cases per 10,000 equals to 1.2. The cumulative cases per 10,000 is predicted to be between 0.01378  and 199.3965. 
+ 
+
+It is similar to other Stringency indices 50,70,90 in the prediction intervals table. In other words, any country with Stringency as 50,70 and 90 (and  Economic Support Index equal to 50, transformed cumulative confirmed cases per 10,000 equals to 1.2), the cumulative cases are predicted between the lower and upper band in table 6.
+
+
+
+Table 6. The 95% Prediction intervals where Stringency Index = 20, 50, 70, 90, respectively, for transformed cumulative confirmed cases per 10,000 = 1.2, and economic support index = 50.
+```{r transf_model_PI}
+
+indexes = c(20, 50, 70, 90)
+
+PI <- data.frame(predict(model_transf, 
+              newdata=data.frame(cumulative_confirmed_cases_per_10000 = 1.2, 
+                                 Stringency_Index= indexes, 
+                                 Economic_Support_Index = 50), 
+              interval="prediction", level=.95))
+PI$SI <- c(20, 50, 70, 90)
+PI <- PI %>%
+  dplyr::select(c(SI, fit, lwr, upr)) %>%
+  mutate(fit = fit^(1/lambda),
+         lwr = lwr^(1/lambda),
+         upr = upr^(1/lambda))
+
+colnames(PI) <- c("SI" , "Point Estimate" , "Lower Limit" , "Upper Limit")
+
+kable(PI,
+    digits = 5)
+```
+
+The 95% Prediction intervals for Economic Support Index; for example, a country with a Stringency Index equals 75, Economic Support Index equal to 25, and transformed cumulative confirmed cases per 10,000 equals to 1.2. The cumulative cases per 10,000 is predicted to be between 0.08134  and 272.0472.
+
+It is similar to other Economic Support indices 50,70,100 in the prediction intervals table. In other words, any country with Economic Support as 50,75 and 100 (and Stringency Index equals 75, transformed cumulative confirmed cases per 10,000 equals to 1.2), the cumulative cases are predicted between the lower and upper band in the table 7.
+
+
+Table 7. The 95% Prediction intervals where Economic Support Index = 25, 50, 75, 100, respectively, for transformed cumulative confirmed cases per 10,000 = 1.2, and Stringency index = 75.
+```{r transf_model_PI_2}
+
+indexes2 = c(25, 50, 75, 100)
+
+PI2 <- data.frame(predict(model_transf, 
+              newdata=data.frame(cumulative_confirmed_cases_per_10000 = 1.2, 
+                                 Stringency_Index= 75, 
+                                 Economic_Support_Index = indexes2), 
+              interval="prediction", level=.95))
+PI2$ESI <- c(25, 50, 75, 100)
+PI2 <- PI2 %>%
+  dplyr::select(c(ESI, fit, lwr, upr)) %>%
+  mutate(fit = fit^(1/lambda),
+         lwr = lwr^(1/lambda),
+         upr = upr^(1/lambda))
+
+colnames(PI2) <- c("ESI" , "Point Estimate" , "Lower Limit" , "Upper Limit")
+
+kable(PI2,
+    digits = 5)
+```
+
+
+
+
+# IV. Discussion 
+
+## i. Conclusions
+
+Our analysis shows that there seems to be some relationship between the total confirmed cases per 10,000 and the Stringency and Economic Support Indices of a country measured with a time-lag of 130 days. We see evidence to suggest that CCC is positively correlated with Stringency and Economic Support Index (in that specific order added to the model), which aligns with our expectation, for it is reasonable for a government to respond strictly and spend more budget on income support packages if their people are more impacted by the pandemic. 
+
+
+## ii. Limitations
+
+The sample was not properly adjusted to account for the missing countries. Even though it represents approximately 85% of all the countries in the World, it fails to represent groups of countries properly, for example by continent or socio-economic regions. Also, the model was not validated using another sample, so its adequacy can also be questioned. 
+ 
+A common limitation when it comes to unorganized data is the way in which the data is recorded and categorized. The data sets used in this study for the confirmed cases of COVID-19 and the indices do not include data for every country registered in the World Bank (the population data set has countries only registered in the World Bank). For example, the Maldives does not have an entry in the data set for the Stringency and Economic Support indices, when it does have an entry in the other two data sets. Using data that was not gathered for the specific purpose of this study is a limitation since inconsistencies such as these are inevitable.
+ 
+Other non-linear models, such as higher degree polynomial regression models, were considered. It was decided to go with the simpler model to avoid overfitting the data and avoid unnecessarily over complicating the analysis.
+ 
+
+
+## iii. Further questions
+
+The model can be greatly improved and become more helpful if other predictor variables are added to it. Variables that were not used to calculate the Stringency and Economic Support Indices could be looked into, since they will probably not have a strong correlation with the indices already in the model. Moreover, a step function can be explored due to the natural breaks in the Economic Support Index, and polynomial regression models of higher degree can be explored to try and explain more variability in the data. 
+ 
+Lastly, the change in the cumulative number of confirmed cases per 10,000, from the day the response was implemented to the most recent date, can be looked at instead of the cumulative number of confirmed cases per 10,000 upto the most recent date.
+
+
+
+***
+
+
+# V. Citations and References {-}

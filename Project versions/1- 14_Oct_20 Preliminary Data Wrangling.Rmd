@@ -1,0 +1,345 @@
+---
+title: "Group Project 2 Code Wrangling"
+author: "Catherine Al Aswad, Ali Alhakeem, Uyen Dao, Long Kim Long"
+date: " Last Updated 10/15/2020"
+output:
+  html_document:
+    fig_caption: yes
+    theme: lumen
+    toc: yes
+    toc_depth: 2
+    df_print: kable
+    toc_float:
+      collapsed: no
+---
+
+```{r, include=FALSE}
+# Do not edit this code block/chunk
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning = FALSE, fig.width = 16/2.5, fig.height = 9/2.5)
+```
+
+
+```{r Packages}
+# Load all necessary packages here:
+library(tidyverse) 
+library(janitor)
+library(moderndive)
+library(here)
+library(knitr)
+library(readxl)
+library(tibbletime)    #to sort a vraible of type 'date'
+library(lattice)   #for residual plots
+library(MASS)    #for box-cox
+library(car)    #for vif
+
+
+#might not need these
+# library(moments)
+# library(leaps)
+
+
+```
+
+```{r Wrangling}
+# data wrangling code:
+#reading in the code
+confirmed_cases <- read_csv(here("time_series_covid19_confirmed_global.csv"))
+indicator_data <- read_csv(here("indicator data.csv"))
+total_population <- read_xls(here("total_population.xls"))
+
+
+
+#confirmed cases
+confirmed_cases_tidy <- confirmed_cases %>%
+    dplyr::select(-c("Province/State", "Lat", "Long")) %>%
+    pivot_longer(names_to = "date",    
+               values_to = "cummulative_confirmed_cases", 
+               cols = -"Country/Region" ) 
+colnames(confirmed_cases_tidy) <- c("Country" , "Date" , "cummulative_confirmed_cases")
+
+confirmed_cases_tidy <- confirmed_cases_tidy %>%
+    group_by(Country, Date) %>%
+    summarise(cummulative_confirmed_cases = sum(cummulative_confirmed_cases)) %>%    #before, the cases were per region in each country, we are summing them to be total per country, irrelevant of region
+    mutate(Date = as.Date(Date, format = "%m/%d/%y"),
+           Country = as.factor(Country))
+
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="US"] = "United States"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Taiwan*"] = "Taiwan"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Burma"] = "Myanmar"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Korea, South"] = "Republic of Korea (South)"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Slovakia"] = "Slovak Republic"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Czechia"] = "Czech Republic"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Congo (Brazzaville)"] = "The Republic of Congo"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Congo (Kinshasa)"] = "The Democratic Republic of Congo"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Kyrgyzstan"] = "Kyrgyz Republic"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Iran"] = "Islamic Republic of Iran"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Syria"] = "Syrian Arab Republic"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Russia"] = "Russian Federation"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Egypt"] = "Arab Republic of Egypt"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Yemen"] = "Republic of Yemen"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Venezuela"] = "Venezuela, RB"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Brunei"] = "Brunei Darussalam"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Laos"] = "Lao People's Democratic Republic"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Saint Kitts and Nevis"] = "St. Kitts and Nevis"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Saint Vincent and the Grenadines"] = "St. Vincent and the Grenadines"
+levels(confirmed_cases_tidy$Country)[levels(confirmed_cases_tidy$Country)=="Saint Lucia"] = "St. Lucia"
+
+
+
+
+#indicator data
+indicator_data_tidy <- indicator_data[-1,] %>%
+   dplyr::select("CountryName", "Date", "StringencyIndex", "EconomicSupportIndex") %>%
+   mutate(Date = as.Date(Date, format = "%Y%m%d"),
+          CountryName = as.factor(CountryName)) %>%
+   group_by(CountryName, Date) %>%
+   summarise(StringencyIndex = mean(StringencyIndex, na.rm=TRUE),
+             EconomicSupportIndex = mean(EconomicSupportIndex, na.rm = TRUE))
+
+colnames(indicator_data_tidy) <- c("Country" , "Date" ,  "Stringency_Index", "Economic_Support_Index")
+
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Cape Verde"] = "Cabo Verde"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Palestine"] = "West Bank and Gaza"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Congo"] = "The Republic of Congo"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Democratic Republic of Congo"] =  "The Democratic Republic of Congo"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Iran"] = "Islamic Republic of Iran"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Syria"] = "Syrian Arab Republic"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Hong Kong"] = "Hong Kong SAR, China"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Russia"] = "Russian Federation"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="South Korea"] = "Republic of Korea (South)"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Egypt"] = "Arab Republic of Egypt"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Yemen"] = "Republic of Yemen"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Venezuela"] = "Venezuela, RB"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Brunei"] = "Brunei Darussalam"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Laos"] = "Lao People's Democratic Republic"
+levels(indicator_data_tidy$Country)[levels(indicator_data_tidy$Country)=="Macao"] = "Macao SAR, China"
+
+
+
+#population data
+total_population_tidy <- total_population[-c(1:3),] %>%  
+  dplyr::select("Data Source", "...64") %>% #using 2019 population (...64) because 2020 population (...65) is not available  
+  na.omit() %>%   #there is a line for 'Not classified' data source and is the only one with an na population in 2019
+  mutate(...64 = as.double(...64))
+
+colnames(total_population_tidy) <- c("Country" , "Population2019")
+
+total_population_tidy <- total_population_tidy %>%
+  mutate(Country = as.factor(Country))         #I did this after changing the column names since I was getting errors when I use a name with more than 1 part (the original name was 'Data Source'))
+
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)== "Virgin Islands (U.S.)"] = "United States Virgin Islands"
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)=="Congo, Rep."] = "The Republic of Congo"
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)=="Congo, Dem. Rep."] =  "The Democratic Republic of Congo"
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)=="Iran, Islamic Rep."] = "Islamic Republic of Iran"
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)=="Korea, Rep."] = "Republic of Korea (South)"
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)=="Egypt, Arab Rep."] = "Arab Republic of Egypt"
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)=="Yemen, Rep."] = "Republic of Yemen"
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)=="Gambia, The"] = "Gambia"
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)=="Lao PDR"] = "Lao People's Democratic Republic"
+levels(total_population_tidy$Country)[levels(total_population_tidy$Country)=="Bahamas, The"] = "Bahamas"
+
+
+
+
+# choose a date: not too early date where not many have high indexes, so the data is more skewed. Before April 28, even if there were precautions taken, the indexes were not updated yet to account for such precautions. Not till after April 28 did the variables used to calculate the indexes were updated to account for more things and give a more accurate index. Some days have missing data, so to choose a day with the least possible missing data, choose one with 166 data points.
+# 29- 06 (June) is the covid 6 month anniversay according to WHO: https://www.who.int/dg/speeches/detail/who-director-general-s-opening-remarks-at-the-media-briefing-on-covid-19---29-june-2020
+#WHO events: https://www.who.int/news-room/detail/29-06-2020-covidtimeline
+#choose a index: containment and health index bc of the variables involved in it
+ 
+ tidy_joined_dataset <-  indicator_data_tidy %>%
+    inner_join(confirmed_cases_tidy, by = c ("Country", "Date")) %>%
+    inner_join(total_population_tidy, by = c ("Country")) %>%
+    mutate(cummulative_confirmed_cases_per_10000 = (cummulative_confirmed_cases/Population2019)*10000)   %>%
+    na.omit()  # %>%
+    # arrange(Date) %>%
+    # as_tbl_time(index = Date) %>%
+    # filter_time(time_formula = ~ '2020-06-20')
+    # 
+ #6 months since  the outbreak in china, 3 months since the infection (1st person) in the US and Korea South
+# july- june ppl agreed they need to face the problem, i.e summer time     like june 20 
+    
+ 
+
+ 
+ tail(names(sort(table(tidy_joined_dataset$Date))), 1)
+ sort(table(tidy_joined_dataset$Date))
+
+
+
+
+
+# intersect(total_population_tidy$Country, indicator_data_tidy$Country)   #181   from the 150s
+# intersect(total_population_tidy$Country, confirmed_cases_tidy$Country)   #183   from the 150s
+# intersect(indicator_data_tidy$Country, confirmed_cases_tidy$Country)     #167   from the 140s
+
+setdiff(unique(total_population_tidy$Country),unique(indicator_data_tidy$Country))
+setdiff(unique(indicator_data_tidy$Country),unique(total_population_tidy$Country))
+
+setdiff(unique(total_population_tidy$Country),unique(confirmed_cases_tidy$Country))
+setdiff(unique(confirmed_cases_tidy$Country),unique(total_population_tidy$Country))
+
+setdiff(unique(indicator_data_tidy$Country), unique(confirmed_cases_tidy$Country))
+setdiff(unique(confirmed_cases_tidy$Country), unique(indicator_data_tidy$Country))
+
+
+ # View(confirmed_cases)
+ # View(indicator_data)
+ # View(total_population)
+ # View(confirmed_cases_tidy)
+ # View(indicator_data_tidy)
+ # View(total_population_tidy)
+ # View(tidy_joined_dataset)
+ 
+
+
+```
+
+```{r scatter_index_plots}
+
+ggplot(tidy_joined_dataset, aes(x= Stringency_Index, y= cummulative_confirmed_cases_per_10000, size = Population2019, color = Containment_Health_Index )) +
+  geom_point(alpha = 0.3)
+
+ggplot(tidy_joined_dataset, aes(x= Government_Response_Index, y= cummulative_confirmed_cases_per_10000, size = Population2019, color = Stringency_Index)) +
+  geom_point(alpha = 0.3)
+
+ggplot(tidy_joined_dataset, aes(x= Containment_Health_Index, y= cummulative_confirmed_cases_per_10000, size = Population2019, color = Stringency_Index)) +
+  geom_point(alpha = 0.3)
+
+ggplot(tidy_joined_dataset, aes(x= Economic_Support_Index, y= cummulative_confirmed_cases_per_10000, size = Population2019, color = Stringency_Index)) +
+  geom_point(alpha = 0.3)
+
+ggplot(tidy_joined_dataset, aes(x= Date, y= Stringency_Index, color = Country)) +
+  geom_line() +
+  theme(legend.position = "none")
+
+ggplot(tidy_joined_dataset, aes(x= Date, y= Government_Response_Index , color = Country)) +
+  geom_line() +
+  theme(legend.position = "none")
+
+ggplot(tidy_joined_dataset, aes(x= Date, y= Containment_Health_Index , color = Country)) +
+  geom_line() +
+  theme(legend.position = "none")
+
+ggplot(tidy_joined_dataset, aes(x= Date, y= Economic_Support_Index, color = Country)) +
+  geom_line() +
+  theme(legend.position = "none")
+```
+
+```{r}
+
+ggplot(tidy_joined_dataset,  aes(x= cummulative_confirmed_cases_per_10000)) +
+  geom_histogram(bins = 20, color = "turquoise3", fill = "blue4")
+
+#bimodal, is this normally distributed
+ggplot(tidy_joined_dataset, aes(x= Stringency_Index)) +
+  geom_histogram(bins = 15, color = "turquoise3", fill = "blue4")
+
+ggplot(tidy_joined_dataset, aes(x= Government_Response_Index)) +
+  geom_histogram(bins = 15, color = "turquoise3", fill = "blue4")
+
+ggplot(tidy_joined_dataset, aes(x= Containment_Health_Index)) +
+  geom_histogram(bins = 15, color = "turquoise3", fill = "blue4")
+
+ggplot(tidy_joined_dataset, aes(x= Economic_Support_Index)) +
+  geom_histogram(color = "turquoise3", fill = "blue4")
+
+
+```
+
+
+```{r  possible_model}
+
+first_model <- lm(cummulative_confirmed_cases_per_10000 ~  Stringency_Index + Economic_Support_Index, data = tidy_joined_dataset)
+
+qqnorm(tidy_joined_dataset$cummulative_confirmed_cases_per_10000, pch = 1, frame = FALSE) 
+qqline(tidy_joined_dataset$cummulative_confirmed_cases_per_10000, col = "mediumpurple1", lwd = 2)
+
+
+
+regression_points <- get_regression_points(first_model)
+ggplot(regression_points, aes(x = residual)) +
+  geom_histogram(bin = 20, color = "mediumvioletred", fill = "mediumpurple1")+
+  labs(x = "Residuals") +
+  theme_bw()
+
+
+
+xyplot(resid(first_model)~predict(first_model), 
+       ylab="Residuals", 
+       xlab="Fitted Values", 
+       type=c("p", "smooth"),
+       panel =function(x,y){panel.xyplot(x,y)
+                            panel.abline(h= 0)})
+
+
+plot(tidy_joined_dataset$Stringency_Index, rstandard(first_model))
+abline(h=0, col = "red")
+# plot(tidy_joined_dataset$Government_Response_Index, rstandard(first_model))
+# abline(h=0, col = "red")
+#plot(tidy_joined_dataset$Containment_Health_Index, rstandard(first_model))
+#abline(h=0, col = "red")
+plot(tidy_joined_dataset$Economic_Support_Index, rstandard(first_model))
+abline(h=0, col = "red")
+
+
+
+```
+
+```{r transformed_model_possibility}
+transformation_test = MASS::boxcox(first_model)
+lambda = transformation_test$x[which(transformation_test$y == max(transformation_test$y))]
+lambda
+
+tidy_joined_dataset["cummulative_confirmed_cases_per_10000_transf"] <- (tidy_joined_dataset$cummulative_confirmed_cases_per_10000)^lambda
+
+
+#creating the transformed model
+model_transf <- lm(cummulative_confirmed_cases_per_10000_transf ~ Stringency_Index + Economic_Support_Index, data = tidy_joined_dataset)
+
+qqnorm(tidy_joined_dataset$cummulative_confirmed_cases_per_10000_transf, pch = 1, frame = FALSE)
+qqline(tidy_joined_dataset$cummulative_confirmed_cases_per_10000_transf, col = "orange", lwd = 2)
+
+regression_points_2 <- get_regression_points(model_transf)
+ggplot(regression_points_2, aes(x = residual)) +
+  geom_histogram(bin = 20, color = "tomato", fill = "orange")+
+  labs(x = "Residual") +
+  theme_bw()
+
+xyplot(resid(model_transf)~predict(model_transf), 
+       ylab="Residuals", 
+       xlab="Fitted Values", 
+       type=c("p", "smooth"),
+       panel =function(x,y){
+                           panel.xyplot(x,y)
+                           panel.abline(h= 0)})
+
+
+plot(tidy_joined_dataset$Stringency_Index, rstandard(model_transf))
+abline(h=0, col = "red")
+# plot(tidy_joined_dataset$Government_Response_Index, rstandard(model_transf))
+# abline(h=0, col = "red")
+#plot(tidy_joined_dataset$Containment_Health_Index, rstandard(model_transf))
+#abline(h=0, col = "red")
+plot(tidy_joined_dataset$Economic_Support_Index, rstandard(model_transf))
+abline(h=0, col = "red")
+
+
+#those would be high since they are calculated using mostly the same variables
+car::vif(first_model)
+car::vif(model_transf)
+
+```
+
+
+
+
+```{r   test_model_summary}
+
+summary(model_transf) 
+kable(confint(model_transf))
+anova(model_transf)
+
+
+#prediction intervals??
+
+```
